@@ -41,7 +41,7 @@ Available Data (in SQL Warehouse)
 - txn_date
 
 ### chargebacks
-- xn_id
+- txn_id
 - chargeback_amount
 - chargeback_date
 ________________________________________
