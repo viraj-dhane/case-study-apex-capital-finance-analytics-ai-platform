@@ -225,59 +225,78 @@ But Tableau needs this:
 
 How would you pivot and transform this using Python?
 ```
+"""
+Purpose:
+Transform long format revenue data (month, customer_id, product, net_revenue)
+into wide format columns required by Tableau:
+"""
+# Read SQL output exported to CSV
 df = pd.read_csv(r"C:\Users\Viraj\Desktop\#Job Hunt\Applications\RingCentral\data sets\sql-output-for-python.csv")
 
 #print(df)
 #print(df.info())
 
+# Standardize column names and data types
 df.columns = df.columns.str.lower()
-
 df['month'] = pd.to_datetime(df['month'])
 df['customer_id'] = df['customer_id'].astype('str')
 df['product'] = df['product'].astype('str')
 
+# Pivot: convert product rows into product revenue columns
 pivot_df = (
     df.pivot_table(
         index=["month", "customer_id"],
         columns="product",
         values="net_revenue",
         aggfunc="sum",     # if multiple transacrions for same product in same month then add
-        fill_value=0
+        fill_value=0    # missing product revenue becomes 0
     )
     .reset_index()
 )
 
-#Rename pivot table columns
+# Rename pivoted product columns to required Tableau names
 pivot_df = pivot_df.rename(columns={
     "loan": "loan_revenue",
     "card": "card_revenue",
     "merchant": "merchant_revenue"
 })
 
-#Total revenue
+# Compute total revenue across products
 pivot_df["total_revenue"] = (pivot_df["loan_revenue"] + pivot_df["card_revenue"] + pivot_df["merchant_revenue"])
 
+# Final Tableau schema and sort by customer_id and month
 pivot_df = pivot_df[["month", "customer_id", "total_revenue", "loan_revenue", "card_revenue", "merchant_revenue"]].sort_values(["customer_id", "month"])
 
+# Remove pivot table column index name
 pivot_df.columns.name = None
 
 #print(pivot_df)
 ```
+
 #### Q5
 
 How would you:
 
 •	Handle missing months
 ```
+"""
+Purpose:
+- Ensure each customer has a continuous monthly time series (fill missing months)
+- Why: Tableau trend lines and rolling calculations break when there is no activity
+  (customer-months) for any month.
+- How: Create a complete (month × customer) grid and fill missing revenue
+  values with 0 to represent no activity.
+"""
 df = pivot_df.copy()
 
+# Standardize types and ordering
 df["month"] = pd.to_datetime(df["month"])
 df["customer_id"] = df["customer_id"].astype(str)
 df = df.sort_values(["customer_id", "month"]).reset_index(drop=True)
 
-print(df)
+# print(df)
 
-# Step 1: get full month range across dataset (Month Start frequency)
+# Step 1: Get full month range across dataset (Month Start frequency)
 all_months = pd.date_range(
     start=df["month"].min(),
     end=df["month"].max(),
@@ -285,7 +304,7 @@ all_months = pd.date_range(
 )
 # print(all_months)
 
-# Step 2: create all month × customer combinations
+# Step 2: Create all month × customer combinations
 customers = df["customer_id"].unique()
 
 full_index = pd.MultiIndex.from_product(
@@ -293,7 +312,7 @@ full_index = pd.MultiIndex.from_product(
     names=["month", "customer_id"]
 )
 
-# Step 3: reindex to insert missing rows
+# Step 3: Reindex to insert missing rows
 df = (
     df.set_index(["month", "customer_id"])
       .reindex(full_index)
@@ -301,17 +320,24 @@ df = (
 )
 #print(df)
 
-# Fill missing revenue values with 0
-revenue_cols = ["total_revenue", "loan_revenue", "card_revenue", "merchant_revenue"]
-for c in revenue_cols:
-    df[c] = df[c].fillna(0)
+# Step 4: Fill missing revenue values with 0
+revenue_columns = ["total_revenue", "loan_revenue", "card_revenue", "merchant_revenue"]
+for col in revenue_columns:
+    df[col] = df[col].fillna(0)
 
 df = df.sort_values(["customer_id", "month"]).reset_index(drop=True)
 ```
 
 •	Smooth out outliers
 ```
-# Using 3 month rolling average on total_revenue
+"""
+Purpose:
+- Smooth outliers using past 3 month rolling average
+- Why: Month to month revenue can be noisy due to one-time spikes or drops.
+- How: Apply a 3-month rolling average on total_revenue per customer to
+  smooth short-term volatility.
+"""
+# 3 month rolling average on total revenue per customer
 df["revenue_smoothed"] = (
     df.groupby("customer_id")["total_revenue"]
       .transform(lambda x: x.rolling(window=3, min_periods=1).mean())
@@ -320,7 +346,14 @@ df["revenue_smoothed"] = (
 
 •	Flag customers with declining revenue
 ```
-# Assumption: Declining  revenue is (based on smoothed revenue) 3 consecutive previous months of negative change
+"""
+Purpose:
+- Flag customers with sustained declining revenue based on smoothed trends.
+- Assumption: Declining  revenue is (based on smoothed revenue) 3 consecutive previous months of negative change
+- Why: Identify customers with sustained revenue decline
+- How: Compute month over month change on smoothed revenue and flag cases
+  where the last 3 consecutive changes are negative.
+"""
 
 # Step 1: month over month change on smoothed revenue
 df["mom_change"] = (df.groupby("customer_id")["revenue_smoothed"].diff())
@@ -341,6 +374,11 @@ Using Python, how would you create: (for Tableau to consume?)
 
 •	A revenue trend table
 ```
+"""
+Purpose:
+- Create a revenue trend table for Tableau consumption, including:
+  revenue_smoothed and decline_flag.
+"""
 trend_df = df[
     [
         "month",
@@ -356,7 +394,7 @@ trend_df = df[
 
 trend_df = trend_df.sort_values(["customer_id", "month"])
 
-# Month label for Tableau
+# Month label for Tableau display / filtering
 trend_df["month_label"] = trend_df["month"].dt.strftime("%Y-%m")
 
 # print(trend_df)
@@ -364,6 +402,11 @@ trend_df["month_label"] = trend_df["month"].dt.strftime("%Y-%m")
 
 •	A simple next-month forecast
 ```
+"""
+Purpose:
+- Create a next month forecast per customer using:
+  average of the last 3 months of total_revenue.
+"""
 # Step 1: Identify the latest month present in the dataset
 latest_month = trend_df["month"].max()
 
