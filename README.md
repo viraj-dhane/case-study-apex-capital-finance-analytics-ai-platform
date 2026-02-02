@@ -80,10 +80,13 @@ Write a SQL query that produces this dataset for the last 6 months:
 (This output will be sent to Python.)
 
 ```
-/*
-Net revenue (last 6 calendar months)
-Time period: From start of current month minus 6 months
-*/
+/*============================================================
+Generate monthly net revenue by customer and product for the last 6 months.
+Assumptions:
+If CHARGEBACKS has multiple rows per txn_id, this join can duplicate
+transaction rows and inflate totals unless chargebacks are pre-aggregated.
+============================================================*/
+
 -- GRAIN: One row per month per customer per product
 SELECT
     DATE_TRUNC('month', t.txn_date) AS month,
@@ -113,8 +116,11 @@ What checks would you add in SQL to make sure:
 
 - No duplicate transactions exist
 ```
+/*============================================================
 Check #1: Duplicate transactions
--- Expected: 0 rows
+Verify txn_id is unique in TRANSACTIONS (no duplicate transactions)
+Expected: 0 rows
+============================================================*/
 SELECT
     txn_id,
     COUNT(*) AS cnt
@@ -123,9 +129,15 @@ GROUP BY txn_id
 HAVING COUNT(*) > 1;
 ```
 ```
+/*============================================================
 Check #2: Join risk (transactions x chargebacks)
--- If this returns rows, joining chargebacks to transactions table could duplicate amounts
--- Expected: 0 rows
+Detect row multiplication risk when joining CHARGEBACKS to TRANSACTIONS.
+If a txn_id maps to multiple chargeback rows, sums can be inflated unless chargebacks are pre-aggregated.
+If this returns rows, joining chargebacks to transactions table could duplicate amounts
+Assumption:
+One chargeback record per txn_id (or chargebacks are pre-aggregated per txn_id before join).
+Expected: 0 rows
+============================================================*/
 SELECT
     t.txn_id,
     COUNT(*) AS cnt
@@ -136,19 +148,27 @@ HAVING COUNT(*) > 1;
 ```
 ```
 /*============================================================
-To make sure no duplicate transactions exist
+Purpose: Create a de-duplicated TRANSACTIONS dataset by keeping one row per txn_id.
+Assumption: If duplicates exist, the most recent txn_date record is the correct one.
 ============================================================*/
 WITH cte_transactions AS (
 SELECT *
 FROM APEX_CAPITAL.FINANCE.TRANSACTIONS
 QUALIFY ROW_NUMBER() OVER (PARTITION BY txn_id ORDER BY txn_date DESC) = 1
 )
+SELECT *
+FROM cte_transactions
 ```
 
 - Chargebacks are applied only once
 ```
+/*============================================================
 Check #3: Multiple chargeback per txn_id
--- Expected: 0 rows
+Verify that each transaction has at most one chargeback record.
+Assumption:
+Each txn_id should appear at most once in CHARGEBACKS.
+Expected: 0 rows
+============================================================*/
 SELECT
     txn_id,
     COUNT(*) AS cnt,
@@ -159,9 +179,9 @@ HAVING COUNT(*) > 1;
 ```
 ```
 /*============================================================
-If we assume that there would be multiple chargebacks per transaction
-then we aggregate all chargebacks per transaction and left join on transactions table.
-This is to check - total chargeback amount should not exceed total purchase amount.
+Validate that total chargebacks applied to a transaction do not exceed the total monetized transaction amount.
+Assumptions:
+Multiple chargebacks per transaction are allowed.
 Expected: 0 rows
 ============================================================*/
 --GRAIN: One row per transaction
