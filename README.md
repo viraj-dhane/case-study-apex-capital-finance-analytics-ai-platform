@@ -98,8 +98,8 @@ SELECT
     - SUM(IFF(t.txn_type = 'refund', t.amount, 0))
     - SUM(COALESCE(cb.chargebacks, 0)) AS net_revenue
 
-FROM APEX_CAPITAL.FINANCE.TRANSACTIONS_DEDUP t
-LEFT JOIN APEX_CAPITAL.FINANCE.CHARGEBACKS_BY_TXN cb ON t.txn_id = cb.txn_id
+FROM APEX_CAPITAL.FINANCE.TRANSACTIONS t
+LEFT JOIN APEX_CAPITAL.FINANCE.CHARGEBACKS cb ON t.txn_id = cb.txn_id
 WHERE 1=1
     AND t.txn_date >= DATEADD(month, -6, DATE_TRUNC('month', CURRENT_DATE())) -- last 6 months + current month
     -- AND customer_id = 'C001'
@@ -160,16 +160,34 @@ HAVING COUNT(*) > 1;
 ```
 /*============================================================
 If we assume that there would be multiple chargebacks per transaction
-then we aggregate all chargebacks per transaction and left join on transactions table
+then we aggregate all chargebacks per transaction and left join on transactions table.
+This is to check - total chargeback amount should not exceed total purchase amount.
+Expected: 0 rows
 ============================================================*/
-
+--GRAIN: One row per transaction
 WITH cte_chargebacks AS (
 SELECT
     txn_id,
     SUM(chargeback_amount) AS chargebacks
 FROM APEX_CAPITAL.FINANCE.CHARGEBACKS
-GROUP BY txn_id;
+GROUP BY txn_id
+),
+cte_transactions AS (
+SELECT
+    txn_id,
+    SUM(IFF(t.txn_type IN ('purchase', 'interest', 'fee'), t.amount, 0)) AS total_purchase_amount
+FROM FROM APEX_CAPITAL.FINANCE.TRANSACTIONS
+GROUP BY txn_id
 )
+SELECT
+  t.txn_id,
+  t.total_purchase_amount,
+  cb.chargebacks,
+  (cb.chargebacks - t.purchase_amount) AS over_by
+FROM cte_transactions t
+LEFT JOIN cte_chargebacks cb
+  ON t.txn_id = cb.txn_id
+WHERE cb.chargebacks > t.total_purchase_amount;
 ```
 ________________________________________
 ### SECTION 2 – Python (Business Logic & Re-Pivoting)
