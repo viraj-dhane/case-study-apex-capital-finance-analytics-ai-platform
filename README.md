@@ -175,19 +175,19 @@ GROUP BY txn_id
 cte_transactions AS (
 SELECT
     txn_id,
-    SUM(IFF(t.txn_type IN ('purchase', 'interest', 'fee'), t.amount, 0)) AS total_purchase_amount
+    SUM(IFF(t.txn_type IN ('purchase', 'interest', 'fee'), t.amount, 0)) AS total_amount
 FROM FROM APEX_CAPITAL.FINANCE.TRANSACTIONS
 GROUP BY txn_id
 )
 SELECT
   t.txn_id,
-  t.total_purchase_amount,
+  t.total_amount,
   cb.chargebacks,
   (cb.chargebacks - t.purchase_amount) AS over_by
 FROM cte_transactions t
 LEFT JOIN cte_chargebacks cb
   ON t.txn_id = cb.txn_id
-WHERE cb.chargebacks > t.total_purchase_amount;
+WHERE cb.chargebacks > t.total_amount;
 ```
 ________________________________________
 ### SECTION 2 – Python (Business Logic & Re-Pivoting)
